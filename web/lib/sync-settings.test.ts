@@ -52,7 +52,7 @@ describe("loadSyncSettings", () => {
     );
     expect(s.merge.enabled).toBe(true);
     expect(s.merge.watchStrategy).toBe("replace");
-    expect(s.merge.activityTypes).toEqual(["strength_training", "indoor_cardio"]);
+    expect(s.merge.activityTypes).toEqual(["strength_training", "indoor_cardio", "other"]);
     expect(s.merge.maxDriftMinutes).toBe(12);
     expect(s.hrFusion).toBe(false);
     expect(s.descriptionEnabled).toBe(false);
@@ -71,7 +71,7 @@ describe("loadSyncSettings", () => {
       merge: {
         enabled: true,
         watchStrategy: "merge",
-        activityTypes: ["strength_training"],
+        activityTypes: ["strength_training", "other"],
         overlapThreshold: 0.7,
         maxDriftMinutes: 20,
       },
@@ -101,7 +101,7 @@ describe("loadSyncSettings", () => {
 
   it("ignores an empty activity-type list, which would match nothing", async () => {
     const s = await loadSyncSettings(fakeSql({ merge_settings: { merge_activity_types: [] } }));
-    expect(s.merge.activityTypes).toEqual(["strength_training"]);
+    expect(s.merge.activityTypes).toEqual(["strength_training", "other"]);
   });
 
   it("carries the user's own exercise mappings, so their sets are not dropped", async () => {
