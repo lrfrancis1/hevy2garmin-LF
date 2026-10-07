@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
     listCandidates: vi.fn(async (_deps: unknown) => [] as unknown[]),
     garminGateway: vi.fn((client: unknown) => ({ client, kind: "gateway" })),
   },
-  ps: { isSynced: vi.fn(async (_id: string, _sql: unknown) => false) },
+  ps: { isSynced: vi.fn(async (_id: string, _sql: unknown) => false), unsync: vi.fn(async (_id: string, _sql: unknown) => true) },
   getGarminClient: vi.fn(async () => ({ name: "healed-client" }) as unknown as GarminClient),
   fetchAllWorkouts: vi.fn(async () => [{ id: "hevy-1" }]),
 }));
@@ -55,6 +55,7 @@ beforeEach(() => {
   h.getGarminClient.mockClear();
   h.fetchAllWorkouts.mockClear();
   h.ps.isSynced.mockClear();
+  h.ps.unsync.mockClear();
 });
 
 describe("syncOneWorkout (route shim)", () => {
@@ -66,6 +67,7 @@ describe("syncOneWorkout (route shim)", () => {
     expect(h.engine.syncOneWorkout.mock.calls[1][1]).toMatchObject({
       dryRun: false,
       targetHevyId: "hevy-1",
+      mergeOnly: true,
     });
   });
 
@@ -86,7 +88,7 @@ describe("syncOneWorkout (route shim)", () => {
       merge: {
         enabled: true,
         watchStrategy: "replace",
-        activityTypes: ["strength_training", "indoor_cardio"],
+        activityTypes: ["strength_training", "indoor_cardio", "other"],
         overlapThreshold: 0.85,
         maxDriftMinutes: 12,
       },
@@ -97,6 +99,27 @@ describe("syncOneWorkout (route shim)", () => {
     const sql = makeSql({ hr_fusion: { enabled: true } }) as never;
     await syncOneWorkout(sql, { dryRun: true, hrFusion: false });
     expect(h.engine.syncOneWorkout.mock.calls[0][1]).toMatchObject({ hrFusion: false });
+  });
+
+
+  it("does not mark a failed live merge as synced when the engine falls back to match", async () => {
+    h.engine.syncOneWorkout.mockResolvedValueOnce({
+      status: "synced",
+      syncMethod: "match",
+      workout: { hevy_id: "hevy-1" },
+      garminActivityId: 24632128245,
+      error: null,
+    } as never);
+
+    const result = await syncOneWorkout(SQL, { dryRun: false, targetHevyId: "hevy-1" });
+
+    expect(h.ps.unsync).toHaveBeenCalledWith("hevy-1", SQL);
+    expect(result).toMatchObject({
+      status: "merge_pending",
+      syncMethod: null,
+      garminActivityId: 24632128245,
+    });
+    expect(String(result.mergeFallbackReason)).toContain("sets/reps were not written");
   });
 
   it("binds the store to the route's sql", async () => {
