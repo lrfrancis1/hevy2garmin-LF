@@ -29,7 +29,7 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   merge: {
     enabled: true,
     watchStrategy: "merge",
-    activityTypes: ["strength_training"],
+    activityTypes: ["strength_training", "other"],
     overlapThreshold: 0.7,
     maxDriftMinutes: 20,
   },
@@ -131,6 +131,10 @@ export async function loadSyncSettings(sql: Sql): Promise<SyncSettings> {
   const types = Array.isArray(mergeCfg?.merge_activity_types)
     ? (mergeCfg!.merge_activity_types as unknown[]).map(String).filter(Boolean)
     : d.merge.activityTypes!;
+  // CIRQA can surface a saved Strength recording through Garmin's activity API
+  // with typeKey "other" even though Connect renders it as Strength Training.
+  // Keep the normal overlap + drift guards, but allow that internal type too.
+  const activityTypes = Array.from(new Set(["strength_training", ...types, "other"]));
 
   return {
     merge: {
@@ -139,7 +143,7 @@ export async function loadSyncSettings(sql: Sql): Promise<SyncSettings> {
         strategy === "merge" || strategy === "replace" || strategy === "describe"
           ? strategy
           : d.merge.watchStrategy,
-      activityTypes: types.length ? types : d.merge.activityTypes,
+      activityTypes,
       // Stored as a percentage for the form, used as a fraction by the matcher.
       overlapThreshold: num(mergeCfg?.merge_overlap_pct, 70) / 100,
       maxDriftMinutes: num(mergeCfg?.merge_max_drift_min, d.merge.maxDriftMinutes!),
