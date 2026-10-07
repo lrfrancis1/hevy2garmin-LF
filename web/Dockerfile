@@ -5,12 +5,13 @@
 # The root Dockerfile is a different image: it builds the Python CLI.
 #
 # Dependencies come from web/package-lock.json exactly as CI installs them, so
-# the `hevy2garmin` engine is the published npm release the lockfile pins, not
-# the typescript/ folder of this checkout.
+# the `hevy2garmin` engine is the fork package the lockfile pins, not the
+# typescript/ folder of this checkout. See vendor/README.md.
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor ./vendor
 RUN npm ci --no-audit --no-fund
 
 
