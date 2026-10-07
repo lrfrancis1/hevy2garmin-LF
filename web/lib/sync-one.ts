@@ -33,7 +33,7 @@ import { hrDepsFor, type HrWorkout } from "./hr-store";
 import { postgresSyncStore } from "./sync-store";
 import { loadSyncSettings, loadSyncStartDate } from "./sync-settings";
 import { parseStartDate, withinSyncWindow } from "./sync-window";
-import type { Sql } from "./pending-store";
+import { unsync, type Sql } from "./pending-store";
 
 export type {
   CandidateWorkout,
@@ -110,11 +110,42 @@ export function listCandidates(sql: Sql, options: SyncOneOptions = {}) {
 export async function syncOneWorkout(sql: Sql, options: SyncOneOptions = {}) {
   const { fetchWorkouts: _f, garminClientFactory: _g, ...engineOptions } = options;
   const saved = await loadSyncSettings(sql);
-  return engineSyncOneWorkout(buildSyncDeps(sql, options), {
+  const effectiveMerge = engineOptions.merge ?? saved.merge;
+  const liveMerge =
+    engineOptions.dryRun === false &&
+    Boolean(effectiveMerge.enabled) &&
+    (effectiveMerge.watchStrategy ?? "merge") === "merge";
+
+  const result = await engineSyncOneWorkout(buildSyncDeps(sql, options), {
     merge: saved.merge,
     hrFusion: saved.hrFusion,
     descriptionEnabled: saved.descriptionEnabled,
     profile: saved.profile,
+    // A manual/live "merge" must never silently fall through to "matched".
+    // If no safe watch target exists, leave it pending instead of pretending
+    // the Hevy sets/reps were written.
+    ...(liveMerge && engineOptions.mergeOnly === undefined ? { mergeOnly: true } : {}),
     ...engineOptions, // an explicit option still wins, which is what tests rely on
   });
+
+  // hevy2garmin 0.11.0 can still return "synced/match" after a merge attempt
+  // failed *after* finding an activity (for example an exerciseSets PUT error).
+  // That is a false success for Merge strategy: the Garmin activity exists but
+  // the Hevy sets/reps did not land. Remove only our local ledger row so the
+  // workout remains retryable; the Garmin activity itself is never deleted.
+  if (liveMerge && result.status === "synced" && result.syncMethod === "match") {
+    const hevyId = String(result.workout?.hevy_id ?? engineOptions.targetHevyId ?? "");
+    if (hevyId) await unsync(hevyId, sql);
+    return {
+      ...result,
+      status: "merge_pending" as const,
+      syncMethod: null,
+      mergeFallbackReason:
+        result.mergeFallbackReason ??
+        "Garmin activity matched, but Hevy sets/reps were not written. Left unsynced so it can be retried.",
+      error: null,
+    };
+  }
+
+  return result;
 }
