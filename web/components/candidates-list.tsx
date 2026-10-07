@@ -17,6 +17,9 @@ interface SyncResult {
   dedupDecision: string;
   garminActivityId: number | null;
   error: string | null;
+  syncMethod?: string | null;
+  mergeFallbackReason?: string | null;
+  setsPushed?: number | null;
 }
 
 const DECISION_LABEL: Record<string, string> = {
@@ -110,11 +113,24 @@ function CandidateRow({ c, onSynced }: { c: Candidate; onSynced: (id: string) =>
       </div>
       {result && !error && (
         <div className="mt-1.5 text-xs text-text-secondary">
-          {result.dryRun ? "Preview: " : ""}
-          {DECISION_LABEL[result.dedupDecision] ?? result.dedupDecision}
-          {result.status === "synced" && result.garminActivityId
-            ? ` · Garmin ${result.garminActivityId}`
-            : ""}
+          {result.status === "merge_pending" ? (
+            <span className="text-warm">
+              Merge not completed: {result.mergeFallbackReason ?? "no compatible Garmin watch activity was found"}
+            </span>
+          ) : result.status === "synced" && result.syncMethod === "merge" ? (
+            <span className="text-success">
+              Merged {result.setsPushed ?? 0} active sets
+              {result.garminActivityId ? ` into Garmin ${result.garminActivityId}` : ""}
+            </span>
+          ) : (
+            <>
+              {result.dryRun ? "Preview: " : ""}
+              {DECISION_LABEL[result.dedupDecision] ?? result.dedupDecision}
+              {result.status === "synced" && result.garminActivityId
+                ? ` · Garmin ${result.garminActivityId}`
+                : ""}
+            </>
+          )}
         </div>
       )}
       {error && (
