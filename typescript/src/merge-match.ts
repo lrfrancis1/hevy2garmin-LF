@@ -136,9 +136,9 @@ export function findMergeMatch(
 }
 
 /**
- * The date range to ask Garmin for, as YYYY-MM-DD. Two hours either side of the
- * workout, so a session that starts late in the evening still reaches the next
- * day's activities.
+ * The date range to ask Garmin for, as YYYY-MM-DD. Pad one day either side so
+ * an activity's local calendar date is included across UTC offsets, as in the
+ * ordinary start-time lookup. Eligibility is still decided in UTC above.
  */
 export function mergeSearchRange(
   workout: TimedWorkout,
@@ -146,7 +146,7 @@ export function mergeSearchRange(
   const hevyStart = toUtcDate(workout.start_time || workout.startTime || "");
   const hevyEnd = toUtcDate(workout.end_time || workout.endTime || "");
   if (!hevyStart || !hevyEnd) return null;
-  const pad = 2 * 3600 * 1000;
+  const pad = 24 * 3600 * 1000;
   return {
     start: new Date(hevyStart.getTime() - pad).toISOString().slice(0, 10),
     end: new Date(hevyEnd.getTime() + pad).toISOString().slice(0, 10),

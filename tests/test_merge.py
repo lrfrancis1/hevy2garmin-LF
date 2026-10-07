@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hevy2garmin.merge import (
     MergeResult,
     _category_to_string,
@@ -67,6 +69,123 @@ HEVY_WORKOUT = {
 
 
 class TestFindMatchingActivity:
+    @pytest.mark.parametrize(
+        ("start", "end", "local_date", "expected_range"),
+        [
+            (
+                "2026-10-06T19:25:22Z",
+                "2026-10-06T20:23:46Z",
+                "2026-10-07",
+                ("2026-10-05", "2026-10-07"),
+            ),
+            (
+                "2026-09-25T23:05:55Z",
+                "2026-09-25T23:58:33Z",
+                "2026-09-26",
+                ("2026-09-24", "2026-09-26"),
+            ),
+            (
+                "2026-09-23T21:06:33Z",
+                "2026-09-23T21:58:00Z",
+                "2026-09-24",
+                ("2026-09-22", "2026-09-24"),
+            ),
+            (
+                "2026-09-15T12:00:00Z",
+                "2026-09-15T13:00:00Z",
+                "2026-09-15",
+                ("2026-09-14", "2026-09-16"),
+            ),
+            (
+                "2026-10-07T03:30:00Z",
+                "2026-10-07T04:30:00Z",
+                "2026-10-06",
+                ("2026-10-06", "2026-10-08"),
+            ),
+            (
+                "2026-10-07T12:30:00Z",
+                "2026-10-07T13:30:00Z",
+                "2026-10-07",
+                ("2026-10-06", "2026-10-08"),
+            ),
+            (
+                "2026-10-03T19:00:00Z",
+                "2026-10-03T20:00:00Z",
+                "2026-10-04",
+                ("2026-10-02", "2026-10-04"),
+            ),
+        ],
+        ids=[
+            "melbourne-aedt",
+            "melbourne-aest",
+            "melbourne-early-aest",
+            "utc-midday",
+            "los-angeles-pdt",
+            "local-midnight",
+            "melbourne-dst-transition",
+        ],
+    )
+    def test_local_calendar_date_discovery(self, start, end, local_date, expected_range):
+        from datetime import datetime
+
+        from hevy2garmin.garmin import find_matching_garmin_activity
+
+        started = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        ended = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        activity = _make_garmin_activity(
+            start=started.strftime("%Y-%m-%d %H:%M:%S"),
+            duration_s=(ended - started).total_seconds(),
+        )
+        client = MagicMock()
+        client.get_activities_by_date.side_effect = lambda first, last: (
+            [activity] if first <= local_date <= last else []
+        )
+        workout = {**HEVY_WORKOUT, "start_time": start, "end_time": end}
+
+        match = find_matching_garmin_activity(client, workout)
+
+        client.get_activities_by_date.assert_called_once_with(*expected_range)
+        assert match is not None
+        assert match["activityId"] == 12345
+
+    @pytest.mark.parametrize("today_present", [True, False])
+    def test_daily_aedt_workouts_do_not_match_another_day(self, today_present):
+        from datetime import datetime, timedelta
+
+        from hevy2garmin.garmin import find_matching_garmin_activity
+
+        start = datetime.fromisoformat("2026-10-06T19:00:00+00:00")
+        recordings = [
+            (
+                f"2026-10-{7 + day:02}",
+                _make_garmin_activity(
+                    activity_id=12345 + day,
+                    start=(start + timedelta(days=day)).strftime("%Y-%m-%d %H:%M:%S"),
+                    duration_s=3600,
+                ),
+            )
+            for day in [-1, 0, 1]
+            if day != 0 or today_present
+        ]
+        client = MagicMock()
+        client.get_activities_by_date.side_effect = lambda first, last: [
+            activity for local_date, activity in recordings if first <= local_date <= last
+        ]
+        workout = {
+            **HEVY_WORKOUT,
+            "start_time": start.isoformat(),
+            "end_time": (start + timedelta(hours=1)).isoformat(),
+        }
+
+        match = find_matching_garmin_activity(client, workout)
+
+        client.get_activities_by_date.assert_called_once_with("2026-10-05", "2026-10-07")
+        if today_present:
+            assert match is not None
+            assert match["activityId"] == 12345
+        else:
+            assert match is None
+
     def test_exact_overlap_matches(self):
         """Strength training with high overlap → match."""
         from hevy2garmin.garmin import find_matching_garmin_activity

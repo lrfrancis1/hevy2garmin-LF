@@ -7,7 +7,7 @@
  * reported. These tests assert the behaviour each setting is supposed to
  * produce, not that a flag was read.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { syncOneWorkout } from "../../src/sync/sync-one";
 import type { GarminGateway, SyncDeps } from "../../src/sync/gateway";
 import type { SyncStore } from "../../src/sync/store";
@@ -158,6 +158,92 @@ describe("merge_mode", () => {
     expect(r.syncMethod).toBe("upload");
     expect(g.upload).toHaveBeenCalledOnce();
     expect(r.mergeFallbackReason).toMatch(/no matching Garmin activity/);
+  });
+});
+
+describe("calendar-date candidate discovery", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-10T12:00:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    ["Melbourne AEDT", "2026-10-06T19:25:22Z", "2026-10-06T20:23:46Z", "2026-10-07"],
+    ["Melbourne AEST", "2026-09-25T23:05:55Z", "2026-09-25T23:58:33Z", "2026-09-26"],
+    ["Melbourne early AEST", "2026-09-23T21:06:33Z", "2026-09-23T21:58:00Z", "2026-09-24"],
+    ["UTC midday", "2026-09-15T12:00:00Z", "2026-09-15T13:00:00Z", "2026-09-15"],
+    ["Los Angeles PDT", "2026-10-07T03:30:00Z", "2026-10-07T04:30:00Z", "2026-10-06"],
+  ])("pushes Hevy sets into an activity listed on its local date: %s", async (_name, start_time, end_time, localDate) => {
+    const workout = { ...WORKOUT, start_time, end_time, updated_at: end_time };
+    const activity = watchActivity({
+      startTimeGMT: garminTime(new Date(start_time)),
+      duration: (Date.parse(end_time) - Date.parse(start_time)) / 1000,
+    });
+    // Model the calendar-date filter, rather than returning a candidate
+    // regardless of the requested dates (which concealed this regression).
+    const g = gateway({
+      activitiesByDate: vi.fn(async (start, end) =>
+        start <= localDate && localDate <= end ? [activity] : [],
+      ),
+    });
+    const s = store();
+    const d = { ...deps(g, s), fetchWorkouts: async () => [workout] };
+    const r = await syncOneWorkout(d, {
+      dryRun: false,
+      hrFusion: false,
+      merge: { enabled: true, watchStrategy: "merge" },
+    });
+
+    expect(r.syncMethod).toBe("merge");
+    expect(r.garminActivityId).toBe(777);
+    expect(r.setsPushed).toBe(2);
+    expect(g.putExerciseSets).toHaveBeenCalledOnce();
+    const payload = vi.mocked(g.putExerciseSets).mock.calls[0][1] as {
+      exerciseSets: Array<{ setType: string; repetitionCount: number }>;
+    };
+    expect(payload.exerciseSets.filter((set) => set.setType === "ACTIVE").map((set) => set.repetitionCount)).toEqual([10, 8]);
+    expect(g.upload).not.toHaveBeenCalled();
+    expect(g.deleteActivity).not.toHaveBeenCalled();
+    expect(g.findExistingActivity).not.toHaveBeenCalled();
+    expect(s.calls).toEqual(["markSynced:w1:merge"]);
+  });
+
+  it.each([true, false])("does not confuse daily 06:00 AEDT recordings (today present: %s)", async (todayPresent) => {
+    const workout = {
+      ...WORKOUT,
+      start_time: "2026-10-06T19:00:00Z",
+      end_time: "2026-10-06T20:00:00Z",
+    };
+    const recordings = [-1, 0, 1].filter((day) => day !== 0 || todayPresent).map((day) => ({
+      localDate: `2026-10-${String(7 + day).padStart(2, "0")}`,
+      activity: watchActivity({
+        activityId: 777 + day,
+        startTimeGMT: garminTime(new Date(Date.parse(workout.start_time) + day * 86400000)),
+      }),
+    }));
+    const g = gateway({
+      activitiesByDate: vi.fn(async (start, end) => recordings
+        .filter(({ localDate }) => start <= localDate && localDate <= end)
+        .map(({ activity }) => activity)),
+    });
+    const r = await syncOneWorkout({ ...deps(g, store()), fetchWorkouts: async () => [workout] }, {
+      dryRun: false,
+      hrFusion: false,
+      mergeOnly: true,
+      merge: { enabled: true, watchStrategy: "merge" },
+    });
+
+    expect(g.activitiesByDate).toHaveBeenCalledWith("2026-10-05", "2026-10-07");
+    if (todayPresent) {
+      expect(r.garminActivityId).toBe(777);
+      expect(g.putExerciseSets).toHaveBeenCalledWith(777, expect.anything());
+    } else {
+      expect(r.status).toBe("merge_pending");
+      expect(g.putExerciseSets).not.toHaveBeenCalled();
+    }
+    expect(g.upload).not.toHaveBeenCalled();
+    expect(g.deleteActivity).not.toHaveBeenCalled();
   });
 });
 

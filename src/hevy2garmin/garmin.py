@@ -349,9 +349,10 @@ def find_matching_garmin_activity(
     if hevy_duration <= 0:
         return None
 
-    # Query activities in a window around the workout
-    search_start = (hevy_start - timedelta(hours=2)).date().isoformat()
-    search_end = (hevy_end + timedelta(hours=2)).date().isoformat()
+    # Include adjacent calendar dates across UTC offsets, as in the ordinary
+    # start-time lookup. Overlap and drift still determine eligibility below.
+    search_start = (hevy_start - timedelta(days=1)).date().isoformat()
+    search_end = (hevy_end + timedelta(days=1)).date().isoformat()
     try:
         activities = _limiter.call(client.get_activities_by_date, search_start, search_end)
     except Exception as e:  # noqa: BLE001  # the Garmin client raises many types; merge falls back

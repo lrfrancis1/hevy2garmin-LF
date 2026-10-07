@@ -122,12 +122,26 @@ describe("findMergeMatch", () => {
 });
 
 describe("mergeSearchRange", () => {
-  it("pads two hours either side so an late-evening session reaches the next day", () => {
+  it("pads one day either side of a workout crossing UTC midnight", () => {
     const r = mergeSearchRange({ start_time: "2026-09-15T23:30:00Z", end_time: "2026-09-16T00:30:00Z" });
-    expect(r).toEqual({ start: "2026-09-15", end: "2026-09-16" });
+    expect(r).toEqual({ start: "2026-09-14", end: "2026-09-17" });
+  });
+
+  it.each([
+    ["Melbourne 06:25 AEDT", "2026-10-06T19:25:22Z", "2026-10-06T20:23:46Z", "2026-10-05", "2026-10-07"],
+    ["Melbourne 09:05 AEST", "2026-09-25T23:05:55Z", "2026-09-25T23:58:33Z", "2026-09-24", "2026-09-26"],
+    ["Melbourne 07:06 AEST", "2026-09-23T21:06:33Z", "2026-09-23T21:58:00Z", "2026-09-22", "2026-09-24"],
+    ["midday UTC", "2026-09-15T12:00:00Z", "2026-09-15T13:00:00Z", "2026-09-14", "2026-09-16"],
+    ["Los Angeles 20:30 PDT", "2026-10-07T03:30:00Z", "2026-10-07T04:30:00Z", "2026-10-06", "2026-10-08"],
+    ["Melbourne local midnight", "2026-10-07T12:30:00Z", "2026-10-07T13:30:00Z", "2026-10-06", "2026-10-08"],
+    ["Melbourne DST transition morning", "2026-10-03T19:00:00Z", "2026-10-03T20:00:00Z", "2026-10-02", "2026-10-04"],
+  ])("includes adjacent calendar dates for %s", (_name, start_time, end_time, start, end) => {
+    expect(mergeSearchRange({ start_time, end_time })).toEqual({ start, end });
   });
 
   it("returns null when the workout has no usable times", () => {
     expect(mergeSearchRange({})).toBeNull();
+    expect(mergeSearchRange({ start_time: "invalid", end_time: WORKOUT.end_time })).toBeNull();
+    expect(mergeSearchRange({ start_time: WORKOUT.start_time })).toBeNull();
   });
 });
